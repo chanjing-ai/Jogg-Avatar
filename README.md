@@ -76,7 +76,7 @@ cd Jogg-Avatar
 #data process
 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" python examples/wanvideo/train_wan_avatar.py   --task data_process   --dataset_path /mlp/data   --output_path ./debug  --num_frames 81   --height 512   --width 512
 #train
-CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" python examples/wanvideo/train_wan_avatar.py   --task train   --train_architecture lora   --dataset_path /datadisk1/data   --output_path ./models   --steps_per_epoch 60000   --max_epochs 100   --learning_rate 1e-4   --lora_rank 16   --lora_alpha 16   --lora_target_modules "q,k,v,o,ffn.0,ffn.2"   --accumulate_grad_batches 1   --use_gradient_checkpointing --use_gradient_checkpointing_offload --pretrained_lora_path pretrained_lora_path/
+CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" python examples/wanvideo/train_wan_avatar.py   --task train   --train_architecture lora   --dataset_path /datadisk1/data   --output_path ./models   --steps_per_epoch 60000   --max_epochs 100   --learning_rate 1e-4   --lora_rank 128   --lora_alpha 64   --lora_target_modules "q,k,v,o,ffn.0,ffn.2"   --accumulate_grad_batches 1   --use_gradient_checkpointing --use_gradient_checkpointing_offload --pretrained_lora_path pretrained_lora_path/
 ```
 
 ## 🔑 Inference
