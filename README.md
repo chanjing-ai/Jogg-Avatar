@@ -107,7 +107,8 @@ torchrun --standalone --nproc_per_node=8 scripts/inference.py --config configs/i
 ## 🧩 Community Works
 We ❤️ contributions from the open-source community! If your work has improved Jogg-Avatar, please inform us. You can directly e-mail suqingchao@limayao.com or contact us with wechat . We are happy to reference your project for everyone's convenience. 🥸Have Fun!If you find this repository useful, please consider giving a star ⭐.
 
-![resize](https://github.com/user-attachments/assets/5a185e16-2f54-470f-8b9d-740512d5e1b9)
+![output_cv](https://github.com/user-attachments/assets/04b3236b-a66f-4589-981a-925be04a35e3)
+
 
 
 ## Acknowledgments
