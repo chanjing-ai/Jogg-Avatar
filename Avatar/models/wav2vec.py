@@ -65,6 +65,9 @@ class Wav2VecModel(Wav2Vec2Model):
         Returns:
             The output of the Wav2Vec model.
         """
+        # Newer Transformers uses SDPA by default, which cannot return the
+        # attentions consumed by this custom encoder path.
+        self.config._attn_implementation = "eager"
         self.config.output_attentions = True
 
         output_hidden_states = (

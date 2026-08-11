@@ -38,12 +38,17 @@ def parse_hp_string(hp_string):
 
 def parse_args():
     global args
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser = argparse.ArgumentParser(description="Run Jogg-Avatar inference.")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file.")
     
     # 定义 argparse 参数
     parser.add_argument("--exp_path", type=str, help="Path to save the model.")
-    parser.add_argument("--input_file", type=str, help="Path to inference txt.")
+    parser.add_argument("--input_file", type=str, help="Batch file using prompt@@media@@audio on each line.")
+    parser.add_argument("--prompt", type=str, default=None, help="Prompt for one inference job.")
+    parser.add_argument("--image_path", type=str, default=None, help="Reference image for 14B image-to-video inference.")
+    parser.add_argument("--audio_path", type=str, default=None, help="Driving audio; overrides the path in --input_file.")
+    parser.add_argument("--output_dir", type=str, default=None, help="Directory for inference results.")
+    parser.add_argument("--result_prefix", type=str, default=None, help="Output filename prefix.")
     parser.add_argument("--debug", action='store_true', default=None)
     parser.add_argument("--infer", action='store_true')
     parser.add_argument("-hp", "--hparams", type=str, default="")
@@ -55,6 +60,7 @@ def parse_args():
         with open(args.config, "r") as f:
             yaml_config = yaml.safe_load(f)
         
+        yaml_config = _resolve_placeholders(yaml_config)
         # 遍历 YAML 配置，将其添加到 args（如果 argparse 里没有定义）
         for key, value in yaml_config.items():
             if not hasattr(args, key):  # argparse 没有的参数
@@ -68,9 +74,6 @@ def parse_args():
     args.device = f'cuda:{args.local_rank}'
     args.num_nodes = int(os.getenv("NNODES", "1"))
     debug = args.debug
-    if not os.path.exists(args.exp_path):
-        args.exp_path = f'checkpoints/{args.exp_path}'
-
     if hasattr(args, 'reload_cfg') and args.reload_cfg:
         # 重新加载配置文件
         conf_path = os.path.join(args.exp_path, "config.json")
@@ -98,7 +101,7 @@ def parse_args():
 def reload(args, conf_path):
     """重新加载配置文件,不覆盖已有的参数"""
     with open(conf_path, "r") as f:
-        yaml_config = yaml.safe_load(f)
+        yaml_config = _resolve_placeholders(yaml.safe_load(f))
     # 遍历 YAML 配置，将其添加到 args（如果 argparse 里没有定义）
     for key, value in yaml_config.items():
         if not hasattr(args, key):  # argparse 没有的参数
@@ -106,6 +109,29 @@ def reload(args, conf_path):
         elif getattr(args, key) is None:  # argparse 有但值为空
             setattr(args, key, value)
     return args
+
+def _resolve_placeholders(cfg):
+    """Resolve environment variables and ${key} references in a YAML mapping."""
+    if not isinstance(cfg, dict):
+        return cfg
+    resolved = {
+        key: os.path.expandvars(value) if isinstance(value, str) else value
+        for key, value in cfg.items()
+    }
+    for _ in range(len(resolved)):
+        changed = False
+        for key, value in resolved.items():
+            if not isinstance(value, str):
+                continue
+            new_value = value
+            for ref_key, ref_value in resolved.items():
+                if isinstance(ref_value, str):
+                    new_value = new_value.replace(f"${{{ref_key}}}", ref_value)
+            changed |= new_value != value
+            resolved[key] = new_value
+        if not changed:
+            break
+    return resolved
 
 def convert_namespace_to_dict(namespace):
     """将 argparse.Namespace 转为字典，并处理不可序列化对象"""

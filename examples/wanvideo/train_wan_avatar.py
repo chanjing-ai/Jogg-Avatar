@@ -3,8 +3,7 @@ from torchvision.transforms import v2
 import torch.nn as nn
 import sys
 sys.path.append('./')
-from einops import rearrange,repeat
-import cv2
+from einops import rearrange
 import lightning as pl
 import pandas as pd
 from Avatar.models.model_manager import ModelManager
@@ -12,10 +11,9 @@ from Avatar.utils.io_utils import load_state_dict
 from Avatar.wan_video import WanVideoPipeline
 from peft import LoraConfig, inject_adapter_in_model
 import torchvision
-from typing import Tuple, Optional
+from typing import Tuple
 from PIL import Image
 import numpy as np
-from whisper.audio2feature import Audio2Feature
 import json
 import random
 import csv
@@ -25,7 +23,6 @@ import math
 from transformers import Wav2Vec2FeatureExtractor
 import torchvision.transforms as TT
 from Avatar.models.wav2vec import Wav2VecModel
-from Avatar.models.vae2_2 import Wan2_2_VAE
 import torch.nn.functional as F
 from Avatar.models.audio_pack import AudioPack
 class TextVideoDataset(torch.utils.data.Dataset):
@@ -191,21 +188,18 @@ class TextVideoDataset(torch.utils.data.Dataset):
 
 
 class LightningModelForDataProcess(pl.LightningModule):
-    def __init__(self, text_encoder_path, vae_path, image_encoder_path=None, tiled=False, tile_size=(34, 34), tile_stride=(18, 16)):
+    def __init__(self, text_encoder_path, vae_path, wav2vec_path, image_encoder_path=None, tiled=False, tile_size=(34, 34), tile_stride=(18, 16)):
         super().__init__()
-        model_path = [text_encoder_path]
+        model_path = [text_encoder_path, vae_path]
         if image_encoder_path is not None:
             model_path.append(image_encoder_path)
         model_manager = ModelManager(torch_dtype=torch.bfloat16, device="cpu")
         model_manager.load_models(model_path)
-        self.vae = Wan2_2_VAE(
-            vae_pth="/mlp/models/Wan2.2-TI2V-5B/Wan2.2_VAE.pth",
-            device=self.device)
         self.pipe = WanVideoPipeline.from_model_manager(model_manager)
         self.wav_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
-                "pretrained_models/wav2vec2-base-960h"
+                wav2vec_path
             )
-        self.audio_encoder = Wav2VecModel.from_pretrained("pretrained_models/wav2vec2-base-960h", local_files_only=True)
+        self.audio_encoder = Wav2VecModel.from_pretrained(wav2vec_path, local_files_only=True)
         self.audio_encoder.feature_extractor._freeze_parameters()
         self.tiler_kwargs = {"tiled": False, "tile_size": (34,34), "tile_stride": (18,16)}
         
@@ -215,19 +209,17 @@ class LightningModelForDataProcess(pl.LightningModule):
         path = batch["path"][0]
         # print(count_frames)
         self.pipe.device = self.device
-        #prompt
-        self.vae.todevice(dtype=self.pipe.torch_dtype,device=self.pipe.device)
-
+        # prompt
         text=batch["text"][0]
         prompt_emb = self.pipe.encode_prompt(text)
         video = batch["frames"].to(dtype=self.pipe.torch_dtype, device=self.pipe.device).squeeze(0)
         ref_frame = batch["ref_frame"].to(dtype=self.pipe.torch_dtype, device=self.pipe.device).squeeze(0)
         ref_frame=[ref_frame]
         video=[video]
-        latents = self.vae.encode(video)[0].to(device=self.device,dtype=torch.bfloat16)
+        latents = self.pipe.encode_video(video, **self.tiler_kwargs).to(device=self.device, dtype=torch.bfloat16)
       
         #image
-        image_lat = self.vae.encode(ref_frame)[0].to(device=self.device,dtype=torch.bfloat16)
+        image_lat = self.pipe.encode_video(ref_frame, **self.tiler_kwargs).to(device=self.device, dtype=torch.bfloat16)
         audio_path = path[:-4]+".wav"
         if os.path.exists(audio_path):
             try:
@@ -675,7 +667,7 @@ class LightningModelForTrain(pl.LightningModule):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser = argparse.ArgumentParser(description="Preprocess data and train Jogg-Avatar 14B.")
     parser.add_argument(
         "--task",
         type=str,
@@ -700,7 +692,7 @@ def parse_args():
     parser.add_argument(
         "--text_encoder_path",
         type=str,
-        default="/mlp/models/Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth",
+        default="models/Wan2.1-T2V-14B/models_t5_umt5-xxl-enc-bf16.pth",
         help="Path of text encoder.",
     )
     parser.add_argument(
@@ -712,13 +704,26 @@ def parse_args():
     parser.add_argument(
         "--vae_path",
         type=str,
-        default="/mlp/models/Wan2.1-T2V-14B/Wan2.1_VAE.pth",
+        default="models/Wan2.1-T2V-14B/Wan2.1_VAE.pth",
         help="Path of VAE.",
+    )
+    parser.add_argument(
+        "--wav2vec_path",
+        type=str,
+        default="models/wav2vec2-base-960h",
+        help="Path of Wav2Vec audio encoder.",
     )
     parser.add_argument(
         "--dit_path",
         type=str,
-        default="/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors",
+        default=(
+            "models/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors,"
+            "models/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors,"
+            "models/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors,"
+            "models/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors,"
+            "models/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors,"
+            "models/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors"
+        ),
         help="Path of DiT.",
     )
     parser.add_argument(
@@ -760,7 +765,7 @@ def parse_args():
     parser.add_argument(
         "--num_frames",
         type=int,
-        default=81,
+        default=121,
         help="Number of frames.",
     )
     parser.add_argument(
@@ -853,7 +858,7 @@ def parse_args():
     parser.add_argument(
         "--pretrained_lora_path",
         type=str,
-        default="None",
+        default=None,
         help="Pretrained LoRA path. Required if the training is resumed.",
     )
     parser.add_argument(
@@ -892,6 +897,7 @@ def data_process(args):
         text_encoder_path=args.text_encoder_path,
         image_encoder_path=args.image_encoder_path,
         vae_path=args.vae_path,
+        wav2vec_path=args.wav2vec_path,
         tiled=args.tiled,
         tile_size=(args.tile_size_height, args.tile_size_width),
         tile_stride=(args.tile_stride_height, args.tile_stride_width),
@@ -919,7 +925,9 @@ def train(args):
     timestamp = time.time()
     local_time = time.localtime(timestamp)
     time_str = time.strftime("%Y/%m/%d %H:%M:%S", local_time).replace("/","_")
-    csv_file = "loss/"+time_str+'_loss_values.csv'
+    loss_dir = os.path.join(args.output_path, "loss")
+    os.makedirs(loss_dir, exist_ok=True)
+    csv_file = os.path.join(loss_dir, time_str + '_loss_values.csv')
     fieldnames = ['train_loss']
 
     # 打开CSV文件并写入表头

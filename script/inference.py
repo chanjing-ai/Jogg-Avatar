@@ -1,7 +1,5 @@
-import subprocess
 import os, sys
 import xfuser
-from glob import glob
 from datetime import datetime
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import math
@@ -14,12 +12,11 @@ from tqdm import tqdm
 from functools import partial
 from Avatar.utils.args_config import parse_args
 args = parse_args()
-import json
 from Avatar.utils.io_utils import load_state_dict 
 from peft import LoraConfig, inject_adapter_in_model
 from Avatar.models.model_manager import ModelManager
 from Avatar.wan_video import WanVideoPipeline
-from Avatar.utils.io_utils import save_video_as_grid_and_mp4
+from Avatar.utils.io_utils import save_video_with_audio
 import torch.distributed as dist
 import torchvision.transforms as TT
 from transformers import Wav2Vec2FeatureExtractor
@@ -27,7 +24,6 @@ import torchvision.transforms as transforms
 import torch.nn.functional as F
 from Avatar.utils.audio_preprocess import add_silence_to_audio_ffmpeg
 from Avatar.distributed.fsdp import shard_model
-from Avatar.models.vae2_2 import Wan2_2_VAE
 def set_seed(seed: int = 42):
     random.seed(seed)
     np.random.seed(seed)
@@ -91,7 +87,7 @@ class WanInferencePipeline(nn.Module):
             chained_trainsforms.append(TT.ToTensor())
             self.transform = TT.Compose(chained_trainsforms)
         if args.use_audio:
-            from OmniAvatar.models.wav2vec import Wav2VecModel
+            from Avatar.models.wav2vec import Wav2VecModel
             self.wav_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
                     args.wav2vec_path
                 )
@@ -337,8 +333,16 @@ class WanInferencePipeline(nn.Module):
 
 def main():
     set_seed(args.seed)
-    # laod data
-    data_iter = read_from_file(args.input_file)
+    if args.prompt:
+        data_iter = [args.prompt]
+        input_name = "prompt"
+    elif args.input_file:
+        if not os.path.isfile(args.input_file):
+            raise FileNotFoundError(f"Prompt file not found: {args.input_file}")
+        data_iter = read_from_file(args.input_file)
+        input_name = os.path.splitext(os.path.basename(args.input_file))[0]
+    else:
+        raise ValueError("Provide --prompt or --input_file.")
     exp_name = os.path.basename(args.exp_path)
     seq_len = args.seq_len
     date_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -347,20 +351,25 @@ def main():
     if args.sp_size > 1:
         date_name = inferpipe.pipe.sp_group.broadcast_object_list([date_name])
         date_name = date_name[0]
-    output_dir = f'demo_out/{exp_name}/res_{os.path.splitext(os.path.basename(args.input_file))[0]}_'\
-                f'seed{args.seed}_step{args.num_steps}_cfg{args.guidance_scale}_'\
-                f'ovlp{args.overlap_frame}_{args.max_tokens}_{args.fps}_{date_name}'
-    if args.tea_cache_l1_thresh > 0:
-        output_dir = f'{output_dir}_tea{args.tea_cache_l1_thresh}'
-    if args.audio_scale is not None:
-        output_dir = f'{output_dir}_acfg{args.audio_scale}'
-    if args.max_hw == 1280:
-        output_dir = f'{output_dir}_720p'
+    if args.output_dir:
+        output_dir = args.output_dir
+    else:
+        output_dir = f'demo_out/{exp_name}/res_{input_name}_'\
+                    f'seed{args.seed}_step{args.num_steps}_cfg{args.guidance_scale}_'\
+                    f'ovlp{args.overlap_frame}_{args.max_tokens}_{args.fps}_{date_name}'
+        if args.tea_cache_l1_thresh > 0:
+            output_dir = f'{output_dir}_tea{args.tea_cache_l1_thresh}'
+        if args.audio_scale is not None:
+            output_dir = f'{output_dir}_acfg{args.audio_scale}'
+        if args.max_hw == 1280:
+            output_dir = f'{output_dir}_720p'
     for idx, text in tqdm(enumerate(data_iter)):
-        if len(text) == 0:
+        text = text.strip()
+        if len(text) == 0 or text.startswith("#"):
             continue
         input_list = text.split("@@")
-        assert len(input_list)<=3
+        if len(input_list) > 3:
+            raise ValueError("Each input line must use prompt@@image@@audio format.")
         if len(input_list) == 0:
             continue
         elif len(input_list) == 1:
@@ -369,16 +378,26 @@ def main():
             text, image_path, audio_path = input_list[0], input_list[1], None
         elif len(input_list) == 3:
             text, image_path, audio_path = input_list[0], input_list[1], input_list[2]
+        image_path = args.image_path or image_path
+        audio_path = args.audio_path or audio_path
+        if args.i2v and not image_path:
+            raise ValueError("A reference image is required via --image_path or the input file.")
+        if image_path and not os.path.isfile(image_path):
+            raise FileNotFoundError(f"Reference image not found: {image_path}")
+        if args.use_audio and not audio_path:
+            raise ValueError("Driving audio is required via --audio_path or the input file.")
+        if audio_path and not os.path.isfile(audio_path):
+            raise FileNotFoundError(f"Driving audio not found: {audio_path}")
         audio_dir = output_dir + '/audio'
         os.makedirs(audio_dir, exist_ok=True)
-        if args.silence_duration_s > 0:
+        if args.silence_duration_s > 0 and audio_path:
             input_audio_path = os.path.join(audio_dir, f"audio_input_{idx:03d}.wav")
         else:
             input_audio_path = audio_path
         prompt_dir = output_dir + '/prompt'
         os.makedirs(prompt_dir, exist_ok=True)
         if dist.get_rank() == 0:
-            if args.silence_duration_s > 0:
+            if args.silence_duration_s > 0 and audio_path:
                 add_silence_to_audio_ffmpeg(audio_path, input_audio_path, args.silence_duration_s)
         dist.barrier()
         video = inferpipe(
@@ -391,14 +410,20 @@ def main():
         prompt_path = os.path.join(prompt_dir, f"prompt_{idx:03d}.txt") 
         
         if dist.get_rank() == 0:
-            add_silence_to_audio_ffmpeg(audio_path, tmp2_audio_path, 1.0 / args.fps + args.silence_duration_s)
-            save_video_as_grid_and_mp4(video, 
-                                    output_dir, 
-                                    args.fps, 
-                                    prompt=text,
-                                    prompt_path = prompt_path,
-                                    audio_path=tmp2_audio_path if args.use_audio else None, 
-                                    prefix=f'result_{idx:03d}')
+            if audio_path and args.use_audio:
+                add_silence_to_audio_ffmpeg(audio_path, tmp2_audio_path, 1.0 / args.fps + args.silence_duration_s)
+            result_prefix = args.result_prefix or f'result_{idx:03d}'
+            if args.result_prefix and idx > 0:
+                result_prefix = f'{args.result_prefix}_{idx:03d}'
+            save_video_with_audio(
+                video,
+                output_dir,
+                args.fps,
+                prompt=text,
+                prompt_path=prompt_path,
+                audio_path=tmp2_audio_path if (args.use_audio and audio_path) else None,
+                prefix=result_prefix,
+            )
         dist.barrier()
 
 class NoPrint:

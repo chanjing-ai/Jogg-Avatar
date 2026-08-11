@@ -2,48 +2,45 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-Jogg-Avatar is an audio-driven 720p avatar video generation model based on
-Wan2.1-T2V-14B. It takes a reference image, a driving audio track, and a text
-prompt, then generates a talking-avatar video with synchronized lip motion.
+Jogg-Avatar 是一个基于 Wan2.1-T2V-14B 的音频驱动 720p 数字人视频生成模型。
+输入一张参考图、驱动音频和文本提示词，即可生成口型与音频同步的数字人视频。
 
-This repository contains only the Jogg-Avatar 14B image-to-video (I2V) training
-and inference pipeline.
+本仓库只包含 Jogg-Avatar 14B 图生视频（I2V）的训练与推理代码。
 
 https://github.com/user-attachments/assets/becb1b28-890a-4316-9103-1b98411c4f86
 
-## Project Timeline
+## 项目时间线
 
-- 2025-10: released Jogg-Avatar 14B training code
-- 2025-11: released Jogg-Avatar 14B inference code
-- 2026-08: completed repository cleanup, uv migration, and inference usability fixes
+- 2025-10：发布 Jogg-Avatar 14B 训练代码
+- 2025-11：发布 Jogg-Avatar 14B 推理代码
+- 2026-08：完成仓库清理、uv 环境迁移与推理易用性修复
 
-## Installation
+## 安装
 
-The environment is managed by [uv](https://docs.astral.sh/uv/). The lock file
-uses Python 3.13, PyTorch 2.8.0, and CUDA 12.8 wheels.
+项目使用 [uv](https://docs.astral.sh/uv/) 管理环境。锁文件基于 Python 3.13、
+PyTorch 2.8.0 和 CUDA 12.8 wheel。
 
 ```bash
 git clone https://github.com/chanjing-ai/Jogg-Avatar.git
 cd Jogg-Avatar
 
-# Inference
+# 推理环境
 uv sync
 
-# Training
+# 训练环境
 uv sync --extra train
 ```
 
-FlashAttention is optional:
+FlashAttention 为可选依赖：
 
 ```bash
 uv sync --extra build
 uv pip install flash-attn==2.8.3 --no-build-isolation
 ```
 
-## Model Setup
+## 模型准备
 
-Download the Wan2.1 base model, Wav2Vec audio encoder, and only the 14B
-Jogg-Avatar checkpoint:
+下载 Wan2.1 基座模型、Wav2Vec 音频编码器，并且只下载 Jogg-Avatar 14B 权重：
 
 ```bash
 mkdir -p models
@@ -57,7 +54,7 @@ uv run hf download cicada-ai/jogg-avatar \
   --local-dir models
 ```
 
-The default config expects:
+默认配置使用以下目录结构：
 
 ```text
 models/
@@ -73,31 +70,29 @@ models/
 └── wav2vec2-base-960h/
 ```
 
-## Inference
+## 推理
 
-Run one reference image and audio pair:
+直接运行一组参考图和音频：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 uv run torchrun --standalone --nproc_per_node=1 \
   script/inference.py \
   --config configs/inference.yaml \
-  --prompt "A person speaking naturally to the camera" \
+  --prompt "一个人自然地面对镜头说话" \
   --image_path /path/to/reference.jpg \
   --audio_path /path/to/driving.wav \
   --output_dir demo_out/14b
 ```
 
-The output directory contains the generated MP4, its muxed audio track, and the
-prompt used for generation.
+输出目录会包含生成的 MP4、合并后的音轨和本次使用的提示词。
 
-For batch inference, use `--input_file`. Empty lines and lines beginning with
-`#` are ignored; every other line uses:
+批量推理时使用 `--input_file`。空行和以 `#` 开头的行会被忽略，其他行格式为：
 
 ```text
-prompt@@reference_image_path@@driving_audio_path
+提示词@@参考图路径@@驱动音频路径
 ```
 
-Multi-GPU inference requires the same process count and sequence-parallel size:
+多卡推理时，进程数和序列并行数必须保持一致：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
@@ -108,29 +103,28 @@ uv run torchrun --standalone --nproc_per_node=8 \
   --hparams sp_size=8,use_fsdp=True,num_persistent_param_in_dit=7000000000
 ```
 
-Useful inference controls in `configs/inference.yaml`:
+`configs/inference.yaml` 中常用的推理参数：
 
-- `guidance_scale`: text guidance strength; 4 to 6 is a practical range.
-- `audio_scale`: independent audio guidance. When unset, it follows text guidance.
-- `num_steps`: 20 to 50; more steps generally improve quality at higher cost.
-- `overlap_frame`: overlap between generated chunks; it must equal `1 + 4*n`.
-- `tea_cache_l1_thresh`: set around 0.05 to 0.15 to trade quality for speed.
-- `num_persistent_param_in_dit`: reduce this value when GPU memory is limited.
+- `guidance_scale`：文本引导强度，建议范围为 4 到 6。
+- `audio_scale`：独立音频引导强度；留空时跟随文本引导强度。
+- `num_steps`：建议 20 到 50，步数越多通常质量越高、耗时越长。
+- `overlap_frame`：分段生成的重叠帧数，必须满足 `1 + 4*n`。
+- `tea_cache_l1_thresh`：可设为 0.05 到 0.15，在速度与质量之间权衡。
+- `num_persistent_param_in_dit`：显存不足时可减小该值。
 
-## Training
+## 训练
 
-Install training dependencies first:
+先安装训练依赖：
 
 ```bash
 uv sync --extra train
 ```
 
-The preprocessing metadata file is
-`<dataset_path>/hallo3_videos_clip_all.csv`. Training reads
-`<dataset_path>/all.csv`. Both files require a `file_name` column; preprocessing
-also reads the `text` column and a same-stem `.wav` audio file.
+预处理读取 `<dataset_path>/hallo3_videos_clip_all.csv`，训练读取
+`<dataset_path>/all.csv`。两个 CSV 都需要 `file_name` 列；预处理 CSV 还读取
+`text` 列，并要求视频存在同名 `.wav` 音频。
 
-Generate VAE, text, and audio features:
+生成 VAE、文本和音频特征：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 uv run python examples/wanvideo/train_wan_avatar.py \
@@ -145,7 +139,7 @@ CUDA_VISIBLE_DEVICES=0 uv run python examples/wanvideo/train_wan_avatar.py \
   --width 720
 ```
 
-Train LoRA and audio-conditioning modules:
+训练 LoRA 与音频条件模块：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run python \
@@ -162,20 +156,18 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run python \
   --use_gradient_checkpointing_offload
 ```
 
-## Repository Scope
+## 仓库范围
 
-The generic DiffSynth applications, unrelated diffusion models, legacy model
-placeholders, and non-Wan examples were removed. The remaining source tree is
-limited to the Jogg-Avatar 14B model, training entrypoint, inference entrypoint,
-and configuration.
+仓库已经移除 DiffSynth 通用应用、无关扩散模型、旧模型占位目录和非 Wan 示例，
+只保留 Jogg-Avatar 14B 模型、训练入口、推理入口与配置。
 
-## Acknowledgments
+## 致谢
 
-This project builds on [Wan](https://github.com/Wan-Video/Wan2.1) and was
-informed by [OmniAvatar](https://github.com/Omni-Avatar/OmniAvatar) and
-[DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio).
+本项目基于 [Wan](https://github.com/Wan-Video/Wan2.1)，并参考了
+[OmniAvatar](https://github.com/Omni-Avatar/OmniAvatar) 与
+[DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio)。
 
-## License
+## 许可证
 
-Released under the [Apache License 2.0](LICENSE). The Wan2.1 base model license
-and usage terms also apply.
+项目使用 [Apache License 2.0](LICENSE)。Wan2.1 基座模型的许可证与使用条款
+同样适用。

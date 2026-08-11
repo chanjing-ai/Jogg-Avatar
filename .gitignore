@@ -1,0 +1,7 @@
+.venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+/models/
+demo_out/
+*.tensors.vae2.2.pth

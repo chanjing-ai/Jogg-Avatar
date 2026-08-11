@@ -27,34 +27,74 @@ try:
     SAGE_ATTN_AVAILABLE = True
 except ModuleNotFoundError:
     SAGE_ATTN_AVAILABLE = False
-    
-    
-def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int, compatibility_mode=False):
+
+
+# Global flag to track which attention backend is being used (only log once)
+_attention_backend_logged = False
+
+def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int, compatibility_mode=False, use_sage_attention=False):
+    """
+    Attention function with support for multiple backends.
+
+    Args:
+        q, k, v: Query, key, value tensors
+        num_heads: Number of attention heads
+        compatibility_mode: If True, use PyTorch native scaled_dot_product_attention
+        use_sage_attention: If True, prioritize Sage Attention when available
+    """
+    global _attention_backend_logged
+
     if compatibility_mode:
+        if not _attention_backend_logged:
+            print("[Attention] Using: PyTorch scaled_dot_product_attention (compatibility_mode)")
+            _attention_backend_logged = True
         q = rearrange(q, "b s (n d) -> b n s d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b n s d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
         x = F.scaled_dot_product_attention(q, k, v)
         x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
+    elif use_sage_attention and SAGE_ATTN_AVAILABLE:
+        # Prioritize Sage Attention if explicitly requested
+        if not _attention_backend_logged:
+            print(f"[Attention] Using: Sage Attention (use_sage_attention={use_sage_attention}, SAGE_ATTN_AVAILABLE={SAGE_ATTN_AVAILABLE})")
+            _attention_backend_logged = True
+        q = rearrange(q, "b s (n d) -> b n s d", n=num_heads)
+        k = rearrange(k, "b s (n d) -> b n s d", n=num_heads)
+        v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
+        x = sageattn(q, k, v)
+        x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
     elif FLASH_ATTN_3_AVAILABLE:
+        if not _attention_backend_logged:
+            print(f"[Attention] Using: Flash Attention 3 (use_sage_attention={use_sage_attention}, FLASH_ATTN_3_AVAILABLE={FLASH_ATTN_3_AVAILABLE})")
+            _attention_backend_logged = True
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
         x = flash_attn_interface.flash_attn_func(q, k, v)
         x = rearrange(x, "b s n d -> b s (n d)", n=num_heads)
     elif FLASH_ATTN_2_AVAILABLE:
+        if not _attention_backend_logged:
+            print(f"[Attention] Using: Flash Attention 2 (use_sage_attention={use_sage_attention}, FLASH_ATTN_2_AVAILABLE={FLASH_ATTN_2_AVAILABLE})")
+            _attention_backend_logged = True
         q = rearrange(q, "b s (n d) -> b s n d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b s n d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
         x = flash_attn.flash_attn_func(q, k, v)
         x = rearrange(x, "b s n d -> b s (n d)", n=num_heads)
     elif SAGE_ATTN_AVAILABLE:
+        # Fallback to Sage Attention if Flash Attention not available
+        if not _attention_backend_logged:
+            print(f"[Attention] Using: Sage Attention (fallback, use_sage_attention={use_sage_attention}, SAGE_ATTN_AVAILABLE={SAGE_ATTN_AVAILABLE})")
+            _attention_backend_logged = True
         q = rearrange(q, "b s (n d) -> b n s d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b n s d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
         x = sageattn(q, k, v)
         x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
     else:
+        if not _attention_backend_logged:
+            print(f"[Attention] Using: PyTorch scaled_dot_product_attention (fallback, use_sage_attention={use_sage_attention})")
+            _attention_backend_logged = True
         q = rearrange(q, "b s (n d) -> b n s d", n=num_heads)
         k = rearrange(k, "b s (n d) -> b n s d", n=num_heads)
         v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
@@ -114,17 +154,18 @@ class RMSNorm(nn.Module):
 
 
 class AttentionModule(nn.Module):
-    def __init__(self, num_heads):
+    def __init__(self, num_heads, use_sage_attention=False):
         super().__init__()
         self.num_heads = num_heads
-        
+        self.use_sage_attention = use_sage_attention
+
     def forward(self, q, k, v):
-        x = flash_attention(q=q, k=k, v=v, num_heads=self.num_heads)
+        x = flash_attention(q=q, k=k, v=v, num_heads=self.num_heads, use_sage_attention=self.use_sage_attention)
         return x
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6):
+    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6, use_sage_attention: bool = False):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -136,8 +177,8 @@ class SelfAttention(nn.Module):
         self.o = nn.Linear(dim, dim)
         self.norm_q = RMSNorm(dim, eps=eps)
         self.norm_k = RMSNorm(dim, eps=eps)
-        
-        self.attn = AttentionModule(self.num_heads)
+
+        self.attn = AttentionModule(self.num_heads, use_sage_attention=use_sage_attention)
 
     def forward(self, x, freqs):
         q = self.norm_q(self.q(x))
@@ -150,11 +191,12 @@ class SelfAttention(nn.Module):
 
 
 class CrossAttention(nn.Module):
-    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6, has_image_input: bool = False):
+    def __init__(self, dim: int, num_heads: int, eps: float = 1e-6, has_image_input: bool = False, use_sage_attention: bool = False):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
+        self.use_sage_attention = use_sage_attention
 
         self.q = nn.Linear(dim, dim)
         self.k = nn.Linear(dim, dim)
@@ -167,8 +209,8 @@ class CrossAttention(nn.Module):
             self.k_img = nn.Linear(dim, dim)
             self.v_img = nn.Linear(dim, dim)
             self.norm_k_img = RMSNorm(dim, eps=eps)
-            
-        self.attn = AttentionModule(self.num_heads)
+
+        self.attn = AttentionModule(self.num_heads, use_sage_attention=use_sage_attention)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor):
         if self.has_image_input:
@@ -183,7 +225,7 @@ class CrossAttention(nn.Module):
         if self.has_image_input:
             k_img = self.norm_k_img(self.k_img(img))
             v_img = self.v_img(img)
-            y = flash_attention(q, k_img, v_img, num_heads=self.num_heads)
+            y = flash_attention(q, k_img, v_img, num_heads=self.num_heads, use_sage_attention=self.use_sage_attention)
             x = x + y
         return self.o(x)
 
@@ -196,15 +238,15 @@ class GateModule(nn.Module):
         return x + gate * residual
 
 class DiTBlock(nn.Module):
-    def __init__(self, has_image_input: bool, dim: int, num_heads: int, ffn_dim: int, eps: float = 1e-6):
+    def __init__(self, has_image_input: bool, dim: int, num_heads: int, ffn_dim: int, eps: float = 1e-6, use_sage_attention: bool = False):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.ffn_dim = ffn_dim
 
-        self.self_attn = SelfAttention(dim, num_heads, eps)
+        self.self_attn = SelfAttention(dim, num_heads, eps, use_sage_attention=use_sage_attention)
         self.cross_attn = CrossAttention(
-            dim, num_heads, eps, has_image_input=has_image_input)
+            dim, num_heads, eps, has_image_input=has_image_input, use_sage_attention=use_sage_attention)
         self.norm1 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False)
         self.norm2 = nn.LayerNorm(dim, eps=eps, elementwise_affine=False)
         self.norm3 = nn.LayerNorm(dim, eps=eps)
@@ -271,14 +313,23 @@ class WanModel(torch.nn.Module):
         num_layers: int,
         has_image_input: bool,
         audio_hidden_size: int=32,
+        use_sage_attention: bool = False,
     ):
         super().__init__()
         self.dim = dim
+        self.in_dim = in_dim
         self.freq_dim = freq_dim
+        self.has_image_input = has_image_input
         self.patch_size = patch_size
+        self.use_sage_attention = use_sage_attention
 
         self.patch_embedding = nn.Conv3d(
             in_dim, dim, kernel_size=patch_size, stride=patch_size)
+        # self.patch_embedding1 = nn.Conv3d(
+        #     in_dim, 2560, kernel_size=patch_size, stride=patch_size)
+        # self.patch_embedding2 = nn.Conv3d(
+        #     2560, 5120, kernel_size=patch_size, stride=patch_size)
+
         self.text_embedding = nn.Sequential(
             nn.Linear(text_dim, dim),
             nn.GELU(approximate='tanh'),
@@ -292,19 +343,27 @@ class WanModel(torch.nn.Module):
         self.time_projection = nn.Sequential(
             nn.SiLU(), nn.Linear(dim, dim * 6))
         self.blocks = nn.ModuleList([
-            DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps)
+            DiTBlock(has_image_input, dim, num_heads, ffn_dim, eps, use_sage_attention=use_sage_attention)
             for _ in range(num_layers)
         ])
         self.head = Head(dim, out_dim, patch_size, eps)
+        # self.head1 = Head(dim, out_dim, [1,4,4], eps)
         head_dim = dim // num_heads
         self.freqs = precompute_freqs_cis_3d(head_dim)
-        # audio_input_dim = 10752
-        # audio_out_dim = dim
-        # self.audio_proj = AudioPack(audio_input_dim, [4, 1, 1], audio_hidden_size, layernorm=True)
-        # self.audio_cond_projs = nn.ModuleList()
-        # for d in range(num_layers // 2 - 1):
-        #     l = nn.Linear(audio_hidden_size, audio_out_dim)
-        #     self.audio_cond_projs.append(l)      
+        # self.conv_trans = nn.ConvTranspose3d(
+        #     in_channels=16, out_channels=16, kernel_size=[1,2,2], stride=[1,2,2], padding=1, output_padding=0)
+        # if has_image_input:
+        #     self.img_emb = MLP(1280, dim)  # clip_feature_dim = 1280
+
+        self.use_audio = bool(getattr(args, "use_audio", False))
+        if self.use_audio:
+            audio_input_dim = 10752
+            audio_out_dim = dim
+            self.audio_proj = AudioPack(audio_input_dim, [4, 1, 1], audio_hidden_size, layernorm=True)
+            self.audio_cond_projs = nn.ModuleList()
+            for d in range(num_layers // 2 - 1):
+                l = nn.Linear(audio_hidden_size, audio_out_dim)
+                self.audio_cond_projs.append(l)
 
     def patchify(self, x: torch.Tensor):
         grid_size = x.shape[2:]
@@ -314,78 +373,143 @@ class WanModel(torch.nn.Module):
     def unpatchify(self, x: torch.Tensor, grid_size: torch.Tensor):
         return rearrange(
             x, 'b (f h w) (x y z c) -> b c (f x) (h y) (w z)',
-            f=grid_size[0], h=grid_size[1], w=grid_size[2], 
+            f=grid_size[0], h=grid_size[1], w=grid_size[2],
             x=self.patch_size[0], y=self.patch_size[1], z=self.patch_size[2]
         )
+        # return rearrange(
+        #     x, 'b (f h w) (x y z c) -> b c (f x) (h y) (w z)',
+        #     f=grid_size[0], h=grid_size[1], w=grid_size[2],
+        #     x=1, y=4, z=4
+        # )
 
     def forward(self,
                 x: torch.Tensor,
                 timestep: torch.Tensor,
                 context: torch.Tensor,
+                clip_feature: Optional[torch.Tensor] = None,
                 y: Optional[torch.Tensor] = None,
+                use_gradient_checkpointing: bool = False,
                 audio_emb: Optional[torch.Tensor] = None,
-                lat_h=0, 
+                use_gradient_checkpointing_offload: bool = False,
+                tea_cache = None,
+                lat_h=0,
                 lat_w=0,
+                **kwargs,
                 ):
         t = self.time_embedding(
             sinusoidal_embedding_1d(self.freq_dim, timestep))
         t_mod = self.time_projection(t).unflatten(1, (6, self.dim))
         context = self.text_embedding(context)
-        
-        
-        # if audio_emb != None and self.use_audio: # TODO  cache
-        
-        # print("x:",x.shape,"y:",y.shape)
-        # x = torch.cat([x, y], dim=1)
-        # # print("x:",x.shape)
-        # x = F.interpolate(input=x, size=(27, 90, 50), mode='trilinear', align_corners=True)
-        # x = self.patch_embedding(x)
+        sequence_parallel_size = getattr(args, "sp_size", 1)
+        input_is_patch_embedded = x.shape[1] == self.dim
+        if not lat_h:
+            lat_h = x.shape[-2] * (2 if input_is_patch_embedded else 1)
+        if not lat_w:
+            lat_w = x.shape[-1] * (2 if input_is_patch_embedded else 1)
+
+        if audio_emb != None and self.use_audio: # TODO  cache
+            audio_emb = audio_emb.permute(0, 2, 1)[:, :, :, None, None]
+            audio_emb = torch.cat([audio_emb[:, :, :1].repeat(1, 1, 3, 1, 1), audio_emb], 2) # 1, 768, 44, 1, 1
+            audio_emb = self.audio_proj(audio_emb)
+
+            audio_emb = torch.concat([audio_cond_proj(audio_emb) for audio_cond_proj in self.audio_cond_projs], 0)
+        # Training passes an externally patch-embedded tensor so its separately
+        # trainable input projection remains checkpoint-compatible. Inference
+        # passes raw latents plus the image condition.
+        if not input_is_patch_embedded:
+            if y is not None:
+                x = torch.cat([x, y], dim=1)
+            if x.shape[1] != self.in_dim:
+                raise ValueError(
+                    f"Expected {self.in_dim} input channels, got {x.shape[1]}."
+                )
+            x = self.patch_embedding(x)
         x, (f, h, w) = self.patchify(x)
+
         freqs = torch.cat([
             self.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
             self.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
             self.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
         ], dim=-1).reshape(f * h * w, 1, -1).to(x.device)
-        
+
         def create_custom_forward(module):
             def custom_forward(*inputs):
                 return module(*inputs)
             return custom_forward
 
-        audio_emb = audio_emb.reshape(x.shape[0], audio_emb.shape[0] // x.shape[0], -1, *audio_emb.shape[2:])
-            
-        for layer_i, block in enumerate(self.blocks):
-            # audio cond
-           
-            au_idx = None
-            if (layer_i <= len(self.blocks) // 2 and layer_i > 1): # < len(self.blocks) - 1:
-                au_idx = layer_i - 2
-                audio_emb_tmp = audio_emb[:, au_idx].repeat(1, 1, lat_h // 2, lat_w // 2, 1) # 1, 11, 45, 25, 128
-                audio_cond_tmp = self.patchify(audio_emb_tmp.permute(0, 4, 1, 2, 3))[0]
-                # print("x:",x.shape,"audio_cond_tmp:",audio_cond_tmp.shape)#The size of tensor a (2250) must match the size of tensor b (30375) at non-singleton dimension 1
-                # try:
-                x = audio_cond_tmp + x
-                # except:
-                #     print("x:",x.shape,"audio_cond_tmp:",audio_cond_tmp.shape)
-          
-            # print("x:",x.shape)
-            with torch.autograd.graph.save_on_cpu():
-                x = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    x, context, t_mod, freqs,
-                    use_reentrant=False,
+        if tea_cache is not None:
+            tea_cache_update = tea_cache.check(self, x, t_mod)
+        else:
+            tea_cache_update = False
+        ori_x_len = x.shape[1]
+        if tea_cache_update:
+            x = tea_cache.update(x)
+        else:
+            if sequence_parallel_size > 1:
+                # Context Parallel
+                sp_size = get_sequence_parallel_world_size()
+                pad_size = 0
+                if ori_x_len % sp_size != 0:
+                    pad_size = sp_size - ori_x_len % sp_size
+                    x = torch.cat([x, torch.zeros_like(x[:, -1:]).repeat(1, pad_size, 1)], 1)
+                x = torch.chunk(x, sp_size, dim=1)[get_sequence_parallel_rank()]
+
+            if audio_emb is not None:
+                audio_emb = audio_emb.reshape(
+                    x.shape[0], audio_emb.shape[0] // x.shape[0], -1, *audio_emb.shape[2:]
                 )
-       
+
+            for layer_i, block in enumerate(self.blocks):
+                # audio cond
+                if audio_emb is not None:
+                    au_idx = None
+                    if (layer_i <= len(self.blocks) // 2 and layer_i > 1): # < len(self.blocks) - 1:
+                        au_idx = layer_i - 2
+                        audio_emb_tmp = audio_emb[:, au_idx].repeat(1, 1, lat_h // 2, lat_w // 2, 1) # 1, 11, 45, 25, 128
+                        audio_cond_tmp = self.patchify(audio_emb_tmp.permute(0, 4, 1, 2, 3))[0]
+                        if sequence_parallel_size > 1:
+                            if pad_size > 0:
+                                audio_cond_tmp = torch.cat([audio_cond_tmp, torch.zeros_like(audio_cond_tmp[:, -1:]).repeat(1, pad_size, 1)], 1)
+                            audio_cond_tmp = torch.chunk(audio_cond_tmp, sp_size, dim=1)[get_sequence_parallel_rank()]
+                        x = audio_cond_tmp + x
+
+                if self.training and use_gradient_checkpointing:
+                    if use_gradient_checkpointing_offload:
+                        with torch.autograd.graph.save_on_cpu():
+                            x = torch.utils.checkpoint.checkpoint(
+                                create_custom_forward(block),
+                                x, context, t_mod, freqs,
+                                use_reentrant=False,
+                            )
+                    else:
+                        x = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward(block),
+                            x, context, t_mod, freqs,
+                            use_reentrant=False,
+                        )
+                else:
+                    x = block(x, context, t_mod, freqs)
+            if tea_cache is not None:
+                x_cache = get_sp_group().all_gather(x, dim=1) if sequence_parallel_size > 1 else x
+                x_cache = x_cache[:, :ori_x_len]
+                tea_cache.store(x_cache)
+
         x = self.head(x, t)
+        if sequence_parallel_size > 1:
+            # Context Parallel
+            x = get_sp_group().all_gather(x, dim=1) # TODO: the size should be devided by sp_size
+            x = x[:, :ori_x_len]
+
         x = self.unpatchify(x, (f, h, w))
-        # x = F.interpolate(input=x, size=(f, 90*2, 50*2), mode='trilinear', align_corners=True)
+        # x = F.interpolate(input=x, size=(f, h*4, w*4), mode='trilinear', align_corners=True)
+        # x=self.conv_trans(x)
         return x
 
     @staticmethod
     def state_dict_converter():
         return WanModelStateDictConverter()
-    
-    
+
+
 class WanModelStateDictConverter:
     def __init__(self):
         pass
@@ -465,16 +589,19 @@ class WanModelStateDictConverter:
             }
         else:
             config = {}
+        if args is not None and hasattr(args, "use_sage_attention"):
+            config["use_sage_attention"] = args.use_sage_attention
         return state_dict_, config
-    
+
     def from_civitai(self, state_dict):
-        if hash_state_dict_keys(state_dict) == "9269f8db9040a9d860eaca435be61814":
+        state_dict_hash = hash_state_dict_keys(state_dict)
+
+        if state_dict_hash == "9269f8db9040a9d860eaca435be61814":
             config = {
                 "has_image_input": False,
                 "patch_size": [1, 2, 2],
                 "in_dim": 16,
                 "dim": 1536,
-                
                 "ffn_dim": 8960,
                 "freq_dim": 256,
                 "text_dim": 4096,
@@ -483,13 +610,12 @@ class WanModelStateDictConverter:
                 "num_layers": 30,
                 "eps": 1e-6
             }
-        elif hash_state_dict_keys(state_dict) == "aafcfd9672c3a2456dc46e1cb6e52c70":
+        elif state_dict_hash == "aafcfd9672c3a2456dc46e1cb6e52c70":
             config = {
                 "has_image_input": False,
                 "patch_size": [1, 2, 2],
-                "in_dim": 33,
+                "in_dim": 16,
                 "dim": 5120,
-                "audio_hidden_size": 32,
                 "ffn_dim": 13824,
                 "freq_dim": 256,
                 "text_dim": 4096,
@@ -498,8 +624,7 @@ class WanModelStateDictConverter:
                 "num_layers": 40,
                 "eps": 1e-6
             }
-        elif hash_state_dict_keys(state_dict) == "6bfcfb3b342cb286ce886889d519a77e":
-            print("6bfcfb3b342cb286ce886889d519a77e")
+        elif state_dict_hash == "6bfcfb3b342cb286ce886889d519a77e":
             config = {
                 "has_image_input": True,
                 "patch_size": [1, 2, 2],
@@ -515,8 +640,13 @@ class WanModelStateDictConverter:
             }
         else:
             config = {}
-        if hasattr(args, "model_config"):
+        if args is not None and hasattr(args, "model_config"):
             model_config = args.model_config
             if model_config is not None:
-                config.update(model_config)        
+                # Adapter configs intentionally override base-model defaults,
+                # for example the 14B audio model expands in_dim from 16 to 33.
+                config.update(model_config)
+        # Add use_sage_attention from args if available
+        if args is not None and hasattr(args, "use_sage_attention"):
+            config["use_sage_attention"] = args.use_sage_attention
         return state_dict, config

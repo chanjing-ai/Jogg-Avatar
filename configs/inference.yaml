@@ -1,11 +1,20 @@
-# 预训练模型路径
+model_dir: models
+base_model_dir: ${model_dir}/Wan2.1-T2V-14B
+avatar_model_dir: ${model_dir}/Jogg-Avatar-14B
+
 dtype: "bf16"
-text_encoder_path: /datadisk1/models/Wan2.1-T2V-14B/models_t5_umt5-xxl-enc-bf16.pth
+text_encoder_path: ${base_model_dir}/models_t5_umt5-xxl-enc-bf16.pth
 image_encoder_path: None
-dit_path: /datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors,/datadisk1/models/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors
-vae_path: /datadisk1/models/Wan2.1-T2V-14B/Wan2.1_VAE.pth
-wav2vec_path: pretrained_models/wav2vec2-base-960h
-exp_path: assets/14B
+dit_path: >-
+  ${base_model_dir}/diffusion_pytorch_model-00001-of-00006.safetensors,
+  ${base_model_dir}/diffusion_pytorch_model-00002-of-00006.safetensors,
+  ${base_model_dir}/diffusion_pytorch_model-00003-of-00006.safetensors,
+  ${base_model_dir}/diffusion_pytorch_model-00004-of-00006.safetensors,
+  ${base_model_dir}/diffusion_pytorch_model-00005-of-00006.safetensors,
+  ${base_model_dir}/diffusion_pytorch_model-00006-of-00006.safetensors
+vae_path: ${base_model_dir}/Wan2.1_VAE.pth
+wav2vec_path: ${model_dir}/wav2vec2-base-960h
+exp_path: ${avatar_model_dir}
 num_persistent_param_in_dit:  # You can set `num_persistent_param_in_dit` to a small number to reduce VRAM required. 
 
 reload_cfg: True

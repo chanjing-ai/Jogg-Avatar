@@ -142,7 +142,7 @@ class WanVideoPipeline(BasePipeline):
         pipe.fetch_models(model_manager)
         if use_usp:
             from xfuser.core.distributed import get_sequence_parallel_world_size, get_sp_group
-            from OmniAvatar.distributed.xdit_context_parallel import usp_attn_forward
+            from Avatar.distributed.xdit_context_parallel import usp_attn_forward
             for block in pipe.dit.blocks:
                 block.self_attn.forward = types.MethodType(usp_attn_forward, block.self_attn)
             pipe.sp_size = get_sequence_parallel_world_size()
