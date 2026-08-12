@@ -49,6 +49,7 @@ def parse_args():
     parser.add_argument("--audio_path", type=str, default=None, help="Driving audio; overrides the path in --input_file.")
     parser.add_argument("--output_dir", type=str, default=None, help="Directory for inference results.")
     parser.add_argument("--result_prefix", type=str, default=None, help="Output filename prefix.")
+    parser.add_argument("--validate_only", action="store_true", help="Validate config, model paths, and media without loading models.")
     parser.add_argument("--debug", action='store_true', default=None)
     parser.add_argument("--infer", action='store_true')
     parser.add_argument("-hp", "--hparams", type=str, default="")

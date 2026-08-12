@@ -53,7 +53,7 @@ def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads
         v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
         x = F.scaled_dot_product_attention(q, k, v)
         x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
-    elif use_sage_attention and SAGE_ATTN_AVAILABLE:
+    elif use_sage_attention and SAGE_ATTN_AVAILABLE and q.is_cuda:
         # Prioritize Sage Attention if explicitly requested
         if not _attention_backend_logged:
             print(f"[Attention] Using: Sage Attention (use_sage_attention={use_sage_attention}, SAGE_ATTN_AVAILABLE={SAGE_ATTN_AVAILABLE})")
@@ -63,7 +63,7 @@ def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads
         v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
         x = sageattn(q, k, v)
         x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
-    elif FLASH_ATTN_3_AVAILABLE:
+    elif FLASH_ATTN_3_AVAILABLE and q.is_cuda:
         if not _attention_backend_logged:
             print(f"[Attention] Using: Flash Attention 3 (use_sage_attention={use_sage_attention}, FLASH_ATTN_3_AVAILABLE={FLASH_ATTN_3_AVAILABLE})")
             _attention_backend_logged = True
@@ -72,7 +72,7 @@ def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
         x = flash_attn_interface.flash_attn_func(q, k, v)
         x = rearrange(x, "b s n d -> b s (n d)", n=num_heads)
-    elif FLASH_ATTN_2_AVAILABLE:
+    elif FLASH_ATTN_2_AVAILABLE and q.is_cuda:
         if not _attention_backend_logged:
             print(f"[Attention] Using: Flash Attention 2 (use_sage_attention={use_sage_attention}, FLASH_ATTN_2_AVAILABLE={FLASH_ATTN_2_AVAILABLE})")
             _attention_backend_logged = True
@@ -81,7 +81,7 @@ def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads
         v = rearrange(v, "b s (n d) -> b s n d", n=num_heads)
         x = flash_attn.flash_attn_func(q, k, v)
         x = rearrange(x, "b s n d -> b s (n d)", n=num_heads)
-    elif SAGE_ATTN_AVAILABLE:
+    elif SAGE_ATTN_AVAILABLE and q.is_cuda:
         # Fallback to Sage Attention if Flash Attention not available
         if not _attention_backend_logged:
             print(f"[Attention] Using: Sage Attention (fallback, use_sage_attention={use_sage_attention}, SAGE_ATTN_AVAILABLE={SAGE_ATTN_AVAILABLE})")

@@ -31,7 +31,7 @@ uv sync
 uv sync --extra train
 ```
 
-FlashAttention 为可选依赖：
+FlashAttention 为可选依赖，720p 推理强烈建议安装：
 
 ```bash
 uv sync --extra build
@@ -45,8 +45,10 @@ uv pip install flash-attn==2.8.3 --no-build-isolation
 ```bash
 mkdir -p models
 
-uv run hf download Wan-AI/Wan2.1-T2V-14B \
-  --local-dir models/Wan2.1-T2V-14B
+# 国内建议通过 ModelScope 下载体积较大的 Wan2.1 基座模型。
+uvx --from modelscope==1.37.1 modelscope download Wan-AI/Wan2.1-T2V-14B \
+  --local_dir models/Wan2.1-T2V-14B
+
 uv run hf download facebook/wav2vec2-base-960h \
   --local-dir models/wav2vec2-base-960h
 uv run hf download cicada-ai/jogg-avatar \
@@ -72,17 +74,45 @@ models/
 
 ## 推理
 
-直接运行一组参考图和音频：
+加载 14B 模型前，先检查模型目录和输入素材：
+
+```bash
+uv run python script/inference.py \
+  --config configs/inference_smoke.yaml \
+  --prompt "一个人自然地面对镜头说话" \
+  --image_path /path/to/reference.jpg \
+  --audio_path /path/to/driving.wav \
+  --validate_only
+```
+
+快速功能验证使用 128x128、1 个去噪步：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 uv run torchrun --standalone --nproc_per_node=1 \
   script/inference.py \
-  --config configs/inference.yaml \
+  --config configs/inference_smoke.yaml \
   --prompt "一个人自然地面对镜头说话" \
   --image_path /path/to/reference.jpg \
   --audio_path /path/to/driving.wav \
-  --output_dir demo_out/14b
+  --output_dir demo_out/14b-smoke
 ```
+
+已实测的 720p 画质配置使用两张 GPU。进程数必须与配置中的 `sp_size`
+保持一致：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nproc_per_node=2 \
+  script/inference.py \
+  --config configs/inference_quality.yaml \
+  --prompt "写实近景人像，自然地面对镜头说话" \
+  --image_path /path/to/reference.jpg \
+  --audio_path /path/to/driving.wav \
+  --output_dir demo_out/14b-quality
+```
+
+画质配置使用 720x1280、20 步、不启用 TeaCache。在两张 RTX 4090 上，1 秒
+样本约需 9 分钟，每张卡约使用 15 GB 显存。长音频会按 33 帧重叠窗口分段生成，
+耗时近似线性增长。单卡可使用 `configs/inference.yaml`，默认通过 CPU offload 降低显存占用。
 
 输出目录会包含生成的 MP4、合并后的音轨和本次使用的提示词。
 
@@ -90,17 +120,6 @@ CUDA_VISIBLE_DEVICES=0 uv run torchrun --standalone --nproc_per_node=1 \
 
 ```text
 提示词@@参考图路径@@驱动音频路径
-```
-
-多卡推理时，进程数和序列并行数必须保持一致：
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-uv run torchrun --standalone --nproc_per_node=8 \
-  script/inference.py \
-  --config configs/inference.yaml \
-  --input_file /path/to/jobs.txt \
-  --hparams sp_size=8,use_fsdp=True,num_persistent_param_in_dit=7000000000
 ```
 
 `configs/inference.yaml` 中常用的推理参数：
@@ -111,6 +130,7 @@ uv run torchrun --standalone --nproc_per_node=8 \
 - `overlap_frame`：分段生成的重叠帧数，必须满足 `1 + 4*n`。
 - `tea_cache_l1_thresh`：可设为 0.05 到 0.15，在速度与质量之间权衡。
 - `num_persistent_param_in_dit`：显存不足时可减小该值。
+- `max_tokens`：每个生成窗口的 token 预算，窗口帧数会根据实际输出分辨率计算。
 
 ## 训练
 
@@ -123,6 +143,10 @@ uv sync --extra train
 预处理读取 `<dataset_path>/hallo3_videos_clip_all.csv`，训练读取
 `<dataset_path>/all.csv`。两个 CSV 都需要 `file_name` 列；预处理 CSV 还读取
 `text` 列，并要求视频存在同名 `.wav` 音频。
+
+预处理会为每个视频生成 `<video>.tensors.vae2.2.pth`，训练直接从同一缓存读取
+音频和文本特征。可选的 `<video>_mouth_info_sm.json` 用于人脸居中裁剪增强；没有
+该文件时使用完整画面训练。
 
 生成 VAE、文本和音频特征：
 
@@ -155,11 +179,6 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run python \
   --use_gradient_checkpointing \
   --use_gradient_checkpointing_offload
 ```
-
-## 仓库范围
-
-仓库已经移除 DiffSynth 通用应用、无关扩散模型、旧模型占位目录和非 Wan 示例，
-只保留 Jogg-Avatar 14B 模型、训练入口、推理入口与配置。
 
 ## 致谢
 

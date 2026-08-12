@@ -7,7 +7,7 @@ from einops import rearrange
 import lightning as pl
 import pandas as pd
 from Avatar.models.model_manager import ModelManager
-from Avatar.utils.io_utils import load_state_dict 
+from Avatar.utils.io_utils import load_state_dict, split_model_paths
 from Avatar.wan_video import WanVideoPipeline
 from peft import LoraConfig, inject_adapter_in_model
 import torchvision
@@ -310,10 +310,11 @@ class TensorDataset(torch.utils.data.Dataset):
 
     
     def load_frames_using_imageio(self, file_path, interval,safetensor_path):
-        if not os.path.exists(safetensor_path) or not os.path.exists(file_path[:-4]+"_mouth_info_sm.json"):
+        if not os.path.exists(safetensor_path):
             return None
         safetensor_data = torch.load(safetensor_path, weights_only=True, map_location="cpu") 
         audio_emb = safetensor_data["audio_emb"]
+        prompt_emb = safetensor_data["prompt_emb"]
         _,count_audio,_=audio_emb.shape
         reader = imageio.get_reader(file_path) 
         count_frames=reader.count_frames()
@@ -321,20 +322,25 @@ class TensorDataset(torch.utils.data.Dataset):
             return None
         else:
             start_frame_id = torch.randint(0, count_audio - (self.num_frames - 1) * self.frame_interval, (1,))[0]
-        with open(file_path[:-4]+"_mouth_info_sm.json", 'r') as file:
-             data = json.load(file)
+        mouth_info_path = file_path[:-4]+"_mouth_info_sm.json"
+        if os.path.exists(mouth_info_path):
+            with open(mouth_info_path, 'r') as file:
+                data = json.load(file)
+        else:
+            data = None
         frames=[]
-        is_tran=random.random()
+        is_tran=random.random() if data is not None else 0.0
         frame = reader.get_data(0)
         H,W,c=frame.shape
-        try:
-            fXmin, fXmax, fYmin, fYmax=data[str(start_frame_id.numpy().astype(int) +1)]["face_bbox"]
-        except:
-            return None
-        w=int(H*(400/720))
-        x_center=(fXmin+fXmax)/2
-        fXmin_new=max(0,int(x_center-w/2))
-        fXmax_new=min(W,int(x_center+w/2))
+        if data is not None:
+            try:
+                fXmin, fXmax, fYmin, fYmax=data[str(start_frame_id.numpy().astype(int) +1)]["face_bbox"]
+            except (KeyError, TypeError, ValueError):
+                return None
+            w=int(H*(400/720))
+            x_center=(fXmin+fXmax)/2
+            fXmin_new=max(0,int(x_center-w/2))
+            fXmax_new=min(W,int(x_center+w/2))
         for frame_id in range(self.num_frames):
             try:
                 frame_id_new=min(count_frames,start_frame_id + frame_id * interval+1)
@@ -369,24 +375,22 @@ class TensorDataset(torch.utils.data.Dataset):
         frames = torch.stack(frames, dim=0)
         frames = rearrange(frames, "T C H W -> C T H W")
 
-        return frames,start_frame_id,audio_emb
+        return frames,start_frame_id,audio_emb,prompt_emb
     def __getitem__(self, index):
-       
         video = None
-        safetensor_path = ""
-        while video==None:
-            data_id = torch.randint(0, len(self.path), (1,))[0]   
+        for _ in range(max(1, len(self.path) * 2)):
+            data_id = torch.randint(0, len(self.path), (1,))[0]
             video_path = self.path[data_id]
-            safetensor_path = video_path+".audio.tensors.wav2vec.pth"
+            safetensor_path = video_path+".tensors.vae2.2.pth"
             video = self.load_frames_using_imageio(video_path,self.frame_interval,safetensor_path)
+            if video is not None:
+                break
+        if video is None:
+            raise RuntimeError(
+                "No valid training sample found. Run data_process and verify the videos."
+            )
  
-        video,start_frame_id,audio_emb = video
-        if "mead" in safetensor_path:
-            prompt_id = 1
-        elif "boyin" in safetensor_path or "ours" in safetensor_path:
-            prompt_id = 2
-        else:
-            prompt_id = 0
+        video,start_frame_id,audio_emb,prompt_emb = video
 
         audio_emb=audio_emb[:,start_frame_id:start_frame_id+121,:]
         
@@ -399,7 +403,7 @@ class TensorDataset(torch.utils.data.Dataset):
         data["ref_frame"]=video[:,ref_id:ref_id+1]
         data["video"]=video
         data["audio_emb"]=audio_emb
-        data["prompt_id"]=prompt_id
+        data["prompt_emb"]=prompt_emb
         data["pre_fix_frames_num"]=pre_fix_frames_num
         return data
     
@@ -440,7 +444,7 @@ class LightningModelForTrain(pl.LightningModule):
         model_manager = ModelManager(device="cpu")
         model_manager.load_models(
             [
-                args.dit_path.split(","),
+                split_model_paths(args.dit_path),
                 args.text_encoder_path,
                 args.vae_path
             ],
@@ -576,7 +580,6 @@ class LightningModelForTrain(pl.LightningModule):
         audio_emb = batch["audio_emb"][0].to(self.device)
         # print("audio_emb:",audio_emb.shape)
         pre_fix_frames_num=batch["pre_fix_frames_num"][0].to(self.device)
-        prompt_id=batch["prompt_id"][0].to(self.device)
         pre_fix_frames_num = (pre_fix_frames_num+3)//4
         self.pipe.device=self.device
         if video is not None:
@@ -588,8 +591,14 @@ class LightningModelForTrain(pl.LightningModule):
             latents=lat.clone()
           
             image_lat = self.pipe.encode_video(ref_frame,  **self.tiler_kwargs)
-        prompt_emb =  self.prompt_emb[prompt_id]
-        prompt_emb["context"] = prompt_emb["context"].to(self.device)
+        prompt_context = batch["prompt_emb"]["context"]
+        if prompt_context.ndim == 4 and prompt_context.shape[0] == 1:
+            prompt_context = prompt_context[0]
+        if prompt_context.ndim != 3:
+            raise ValueError(
+                f"Expected prompt context with 3 dimensions, got {prompt_context.shape}."
+            )
+        prompt_emb = {"context": prompt_context.to(self.device)}
         image_emb={}
         msk = torch.zeros_like(image_lat.repeat(1, 1, 27, 1, 1)[:,:1])
         image_cat = image_lat.repeat(1, 1, 27, 1, 1)

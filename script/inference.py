@@ -12,7 +12,7 @@ from tqdm import tqdm
 from functools import partial
 from Avatar.utils.args_config import parse_args
 args = parse_args()
-from Avatar.utils.io_utils import load_state_dict 
+from Avatar.utils.io_utils import load_state_dict, split_model_paths
 from peft import LoraConfig, inject_adapter_in_model
 from Avatar.models.model_manager import ModelManager
 from Avatar.wan_video import WanVideoPipeline
@@ -24,6 +24,11 @@ import torchvision.transforms as transforms
 import torch.nn.functional as F
 from Avatar.utils.audio_preprocess import add_silence_to_audio_ffmpeg
 from Avatar.distributed.fsdp import shard_model
+from Avatar.utils.inference_validation import (
+    compute_window_frames,
+    validate_media_paths,
+    validate_runtime_config,
+)
 def set_seed(seed: int = 42):
     random.seed(seed)
     np.random.seed(seed)
@@ -35,6 +40,19 @@ def read_from_file(p):
     with open(p, "r") as fin:
         for l in fin:
             yield l.strip()
+
+
+def parse_job(text, cli_image_path=None, cli_audio_path=None):
+    text = text.strip()
+    if not text or text.startswith("#"):
+        return None
+    input_list = text.split("@@")
+    if len(input_list) > 3:
+        raise ValueError("Each input line must use prompt@@image@@audio format.")
+    prompt = input_list[0]
+    image_path = input_list[1] if len(input_list) >= 2 else None
+    audio_path = input_list[2] if len(input_list) == 3 else None
+    return prompt, cli_image_path or image_path, cli_audio_path or audio_path
 
 def match_size(image_size, h, w):
     ratio_ = 9999
@@ -74,7 +92,7 @@ class WanInferencePipeline(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.device = torch.device(f"cuda:{args.rank}")
+        self.device = torch.device(f"cuda:{args.local_rank}")
         if args.dtype=='bf16':
             self.dtype = torch.bfloat16
         elif args.dtype=='fp16':
@@ -95,9 +113,11 @@ class WanInferencePipeline(nn.Module):
             self.audio_encoder.feature_extractor._freeze_parameters()
 
     def load_model(self):
+        torch.cuda.set_device(self.device)
         dist.init_process_group(
             backend="nccl",
             init_method="env://",
+            device_id=self.device,
         )
         from xfuser.core.distributed import (initialize_model_parallel,
                                             init_distributed_environment)
@@ -109,7 +129,7 @@ class WanInferencePipeline(nn.Module):
             ring_degree=1,
             ulysses_degree=args.sp_size,
         )
-        torch.cuda.set_device(dist.get_rank())
+        torch.cuda.set_device(args.local_rank)
         ckpt_path = f'{args.exp_path}/diffusion_pytorch_model.safetensors'
         assert os.path.exists(ckpt_path), f"pytorch_model.pt not found in {args.exp_path}"
         if args.train_architecture == 'lora':
@@ -123,7 +143,7 @@ class WanInferencePipeline(nn.Module):
         model_manager = ModelManager(device="cpu", infer=True)
         model_manager.load_models(
             [
-                args.dit_path.split(","),
+                split_model_paths(args.dit_path),
                 args.text_encoder_path,
                 args.vae_path
             ],
@@ -133,7 +153,7 @@ class WanInferencePipeline(nn.Module):
       
         pipe = WanVideoPipeline.from_model_manager(model_manager, 
                                                 torch_dtype=self.dtype, 
-                                                device=f"cuda:{dist.get_rank()}", 
+                                                device=f"cuda:{args.local_rank}",
                                                 use_usp=True if args.sp_size > 1 else False,
                                                 infer=True)
         if args.train_architecture == "lora":
@@ -223,10 +243,7 @@ class WanInferencePipeline(nn.Module):
         else:
             image = None
             select_size = [height, width]
-        # L = int(args.max_tokens * 16 * 16 * 4 / select_size[0] / select_size[1])
-        L = int(args.max_tokens * 16 * 16 * 4 / 720 / 400)
-
-        L = L // 4 * 4 + 1 if L % 4 != 0 else L - 3  # video frames
+        L = compute_window_frames(args.max_tokens, select_size[0], select_size[1])
         T = (L + 3) // 4  # latent frames
 
         if self.args.i2v:
@@ -333,6 +350,7 @@ class WanInferencePipeline(nn.Module):
 
 def main():
     set_seed(args.seed)
+    validate_runtime_config(args)
     if args.prompt:
         data_iter = [args.prompt]
         input_name = "prompt"
@@ -343,6 +361,26 @@ def main():
         input_name = os.path.splitext(os.path.basename(args.input_file))[0]
     else:
         raise ValueError("Provide --prompt or --input_file.")
+    jobs = []
+    for text in data_iter:
+        job = parse_job(text, args.image_path, args.audio_path)
+        if job is None:
+            continue
+        validate_media_paths(
+            job[1],
+            job[2],
+            require_image=args.i2v,
+            require_audio=args.use_audio,
+        )
+        jobs.append(job)
+    if not jobs:
+        raise ValueError("No inference jobs found.")
+
+    if args.validate_only:
+        if args.local_rank == 0:
+            print(f"Validation passed: {len(jobs)} inference job(s).")
+        return
+
     exp_name = os.path.basename(args.exp_path)
     seq_len = args.seq_len
     date_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -363,31 +401,7 @@ def main():
             output_dir = f'{output_dir}_acfg{args.audio_scale}'
         if args.max_hw == 1280:
             output_dir = f'{output_dir}_720p'
-    for idx, text in tqdm(enumerate(data_iter)):
-        text = text.strip()
-        if len(text) == 0 or text.startswith("#"):
-            continue
-        input_list = text.split("@@")
-        if len(input_list) > 3:
-            raise ValueError("Each input line must use prompt@@image@@audio format.")
-        if len(input_list) == 0:
-            continue
-        elif len(input_list) == 1:
-            text, image_path, audio_path = input_list[0], None, None
-        elif len(input_list) == 2:
-            text, image_path, audio_path = input_list[0], input_list[1], None
-        elif len(input_list) == 3:
-            text, image_path, audio_path = input_list[0], input_list[1], input_list[2]
-        image_path = args.image_path or image_path
-        audio_path = args.audio_path or audio_path
-        if args.i2v and not image_path:
-            raise ValueError("A reference image is required via --image_path or the input file.")
-        if image_path and not os.path.isfile(image_path):
-            raise FileNotFoundError(f"Reference image not found: {image_path}")
-        if args.use_audio and not audio_path:
-            raise ValueError("Driving audio is required via --audio_path or the input file.")
-        if audio_path and not os.path.isfile(audio_path):
-            raise FileNotFoundError(f"Driving audio not found: {audio_path}")
+    for idx, (text, image_path, audio_path) in tqdm(enumerate(jobs)):
         audio_dir = output_dir + '/audio'
         os.makedirs(audio_dir, exist_ok=True)
         if args.silence_duration_s > 0 and audio_path:
@@ -436,4 +450,8 @@ if __name__ == '__main__':
     if not args.debug:
         if args.local_rank != 0: # 屏蔽除0外的输出
             sys.stdout = NoPrint()
-    main()
+    try:
+        main()
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group()

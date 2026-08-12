@@ -15,6 +15,11 @@ from safetensors import safe_open
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
+def split_model_paths(value):
+    """Split comma-separated model paths produced by CLI or folded YAML."""
+    return [path.strip() for path in value.split(",") if path.strip()]
+
+
 @contextmanager
 def init_weights_on_device(device=torch.device("meta"), include_buffers=False):
     old_register_parameter = torch.nn.Module.register_parameter

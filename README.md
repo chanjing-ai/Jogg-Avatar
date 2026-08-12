@@ -33,7 +33,7 @@ uv sync
 uv sync --extra train
 ```
 
-FlashAttention is optional:
+FlashAttention is optional but strongly recommended for 720p inference:
 
 ```bash
 uv sync --extra build
@@ -48,8 +48,10 @@ Jogg-Avatar checkpoint:
 ```bash
 mkdir -p models
 
-uv run hf download Wan-AI/Wan2.1-T2V-14B \
-  --local-dir models/Wan2.1-T2V-14B
+# ModelScope is recommended for the large Wan2.1 base model in China.
+uvx --from modelscope==1.37.1 modelscope download Wan-AI/Wan2.1-T2V-14B \
+  --local_dir models/Wan2.1-T2V-14B
+
 uv run hf download facebook/wav2vec2-base-960h \
   --local-dir models/wav2vec2-base-960h
 uv run hf download cicada-ai/jogg-avatar \
@@ -75,37 +77,55 @@ models/
 
 ## Inference
 
-Run one reference image and audio pair:
+Validate the model layout and input media before loading the 14B model:
+
+```bash
+uv run python script/inference.py \
+  --config configs/inference_smoke.yaml \
+  --prompt "A person speaking naturally to the camera" \
+  --image_path /path/to/reference.jpg \
+  --audio_path /path/to/driving.wav \
+  --validate_only
+```
+
+Run a fast end-to-end smoke test at 128x128 with one denoising step:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 uv run torchrun --standalone --nproc_per_node=1 \
   script/inference.py \
-  --config configs/inference.yaml \
+  --config configs/inference_smoke.yaml \
   --prompt "A person speaking naturally to the camera" \
   --image_path /path/to/reference.jpg \
   --audio_path /path/to/driving.wav \
-  --output_dir demo_out/14b
+  --output_dir demo_out/14b-smoke
 ```
 
-The output directory contains the generated MP4, its muxed audio track, and the
-prompt used for generation.
+For the tested 720p quality profile, use two GPUs. The process count must equal
+`sp_size` in the config:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 uv run torchrun --standalone --nproc_per_node=2 \
+  script/inference.py \
+  --config configs/inference_quality.yaml \
+  --prompt "A realistic close-up portrait speaking naturally to the camera" \
+  --image_path /path/to/reference.jpg \
+  --audio_path /path/to/driving.wav \
+  --output_dir demo_out/14b-quality
+```
+
+The quality profile uses 720x1280, 20 steps, and no TeaCache. On two RTX 4090
+GPUs, a one-second sample took about nine minutes and used about 15 GB VRAM per
+GPU. Longer audio is generated in 33-frame overlapping windows, so runtime grows
+approximately linearly. A single-GPU run can use `configs/inference.yaml`; it is
+slower and uses CPU offload by default.
+
+The output directory contains the generated MP4, muxed audio, and prompt.
 
 For batch inference, use `--input_file`. Empty lines and lines beginning with
 `#` are ignored; every other line uses:
 
 ```text
 prompt@@reference_image_path@@driving_audio_path
-```
-
-Multi-GPU inference requires the same process count and sequence-parallel size:
-
-```bash
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
-uv run torchrun --standalone --nproc_per_node=8 \
-  script/inference.py \
-  --config configs/inference.yaml \
-  --input_file /path/to/jobs.txt \
-  --hparams sp_size=8,use_fsdp=True,num_persistent_param_in_dit=7000000000
 ```
 
 Useful inference controls in `configs/inference.yaml`:
@@ -116,6 +136,8 @@ Useful inference controls in `configs/inference.yaml`:
 - `overlap_frame`: overlap between generated chunks; it must equal `1 + 4*n`.
 - `tea_cache_l1_thresh`: set around 0.05 to 0.15 to trade quality for speed.
 - `num_persistent_param_in_dit`: reduce this value when GPU memory is limited.
+- `max_tokens`: token budget per generation window. Window length is calculated
+  from the selected output resolution.
 
 ## Training
 
@@ -129,6 +151,10 @@ The preprocessing metadata file is
 `<dataset_path>/hallo3_videos_clip_all.csv`. Training reads
 `<dataset_path>/all.csv`. Both files require a `file_name` column; preprocessing
 also reads the `text` column and a same-stem `.wav` audio file.
+
+Preprocessing writes `<video>.tensors.vae2.2.pth`; training reads the same cache
+for audio and prompt embeddings. An optional `<video>_mouth_info_sm.json` enables
+face-centered crop augmentation. Without it, training uses the full frame.
 
 Generate VAE, text, and audio features:
 
