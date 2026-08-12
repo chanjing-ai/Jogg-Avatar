@@ -11,6 +11,42 @@ and inference pipeline.
 
 https://github.com/user-attachments/assets/becb1b28-890a-4316-9103-1b98411c4f86
 
+## Experience It in Our Products
+
+<p align="center">
+  The avatar-generation technology behind Jogg-Avatar is available in our
+  production products. Create AI avatar videos without deploying the model
+  locally.
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://www.chanjing.cc/home/">
+        <img src="assets/brand/chanjing-logo.png" alt="Chanjing AI" height="52">
+      </a>
+      <br>
+      <strong>Chanjing AI</strong>
+      <br>
+      <sub>AI video creation for Chinese creators and businesses</sub>
+      <br><br>
+      <a href="https://www.chanjing.cc/home/"><strong>Visit Chanjing</strong></a>
+    </td>
+    <td align="center" width="50%">
+      <a href="https://www.jogg.ai/">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="assets/brand/joggai-logo-dark.png">
+          <img src="assets/brand/joggai-logo.png" alt="JoggAI" height="52">
+        </picture>
+      </a>
+      <br>
+      <sub>AI video creation for global marketing and content teams</sub>
+      <br><br>
+      <a href="https://www.jogg.ai/"><strong>Visit JoggAI</strong></a>
+    </td>
+  </tr>
+</table>
+
 ## Project Timeline
 
 - 2025-10: released Jogg-Avatar 14B training code

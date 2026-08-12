@@ -9,6 +9,41 @@ Jogg-Avatar 是一个基于 Wan2.1-T2V-14B 的音频驱动 720p 数字人视频�
 
 https://github.com/user-attachments/assets/becb1b28-890a-4316-9103-1b98411c4f86
 
+## 在我们的产品中体验
+
+<p align="center">
+  Jogg-Avatar 所采用的数字人生成技术也已应用于我们的商业产品。无需本地部署模型，
+  即可体验 AI 数字人视频创作。
+</p>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="https://www.chanjing.cc/home/">
+        <img src="assets/brand/chanjing-logo.png" alt="蝉镜 AI" height="52">
+      </a>
+      <br>
+      <strong>蝉镜 AI</strong>
+      <br>
+      <sub>面向国内创作者与企业的 AI 视频创作平台</sub>
+      <br><br>
+      <a href="https://www.chanjing.cc/home/"><strong>访问蝉镜</strong></a>
+    </td>
+    <td align="center" width="50%">
+      <a href="https://www.jogg.ai/">
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="assets/brand/joggai-logo-dark.png">
+          <img src="assets/brand/joggai-logo.png" alt="JoggAI" height="52">
+        </picture>
+      </a>
+      <br>
+      <sub>面向全球营销与内容团队的 AI 视频创作平台</sub>
+      <br><br>
+      <a href="https://www.jogg.ai/"><strong>访问 JoggAI</strong></a>
+    </td>
+  </tr>
+</table>
+
 ## 项目时间线
 
 - 2025-10：发布 Jogg-Avatar 14B 训练代码
