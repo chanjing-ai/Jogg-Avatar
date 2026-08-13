@@ -7,7 +7,7 @@ Jogg-Avatar 是一个基于 Wan2.1-T2V-14B 的音频驱动 720p 数字人视频�
 
 本仓库只包含 Jogg-Avatar 14B 图生视频（I2V）的训练与推理代码。
 
-https://github.com/user-attachments/assets/becb1b28-890a-4316-9103-1b98411c4f86
+https://github.com/user-attachments/assets/560b72a5-8384-4892-a293-0766acbcf106
 
 ## 在我们的产品中体验
 
