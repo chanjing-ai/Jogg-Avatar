@@ -9,7 +9,13 @@ prompt, then generates a talking-avatar video with synchronized lip motion.
 This repository contains only the Jogg-Avatar 14B image-to-video (I2V) training
 and inference pipeline.
 
-https://github.com/user-attachments/assets/becb1b28-890a-4316-9103-1b98411c4f86
+
+
+https://github.com/user-attachments/assets/560b72a5-8384-4892-a293-0766acbcf106
+
+
+
+
 
 ## Experience It in Our Products
 
