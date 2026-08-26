@@ -1,0 +1,19 @@
+{
+  "architecture": "ChanjingAvatar",
+  "base_model": "Wan-AI/Wan2.1-T2V-14B",
+  "model_size": "14B",
+  "weight_file": "diffusion_pytorch_model.safetensors",
+  "i2v": true,
+  "use_audio": true,
+  "random_prefix_frames": true,
+  "sp_size": 1,
+  "model_config": {
+    "in_dim": 33,
+    "audio_hidden_size": 32
+  },
+  "lora_target_modules": "q,k,v,o,ffn.0,ffn.2",
+  "init_lora_weights": "kaiming",
+  "lora_rank": 128,
+  "lora_alpha": 64.0,
+  "train_architecture": "lora"
+}

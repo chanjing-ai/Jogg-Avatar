@@ -514,7 +514,7 @@ wheels = [
 ]
 
 [[package]]
-name = "jogg-avatar"
+name = "chanjing-avatar"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

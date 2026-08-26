@@ -1,18 +1,23 @@
-# Jogg-Avatar 14B
+# Chanjing-Avatar 14B
 
 [English](README.md) | [简体中文](README_zh.md)
 
-Jogg-Avatar is an audio-driven 720p avatar video generation model based on
+Chanjing-Avatar is an audio-driven 720p avatar video generation model based on
 Wan2.1-T2V-14B. It takes a reference image, a driving audio track, and a text
 prompt, then generates a talking-avatar video with synchronized lip motion.
 
-This repository contains only the Jogg-Avatar 14B image-to-video (I2V) training
+This repository contains only the Chanjing-Avatar 14B image-to-video (I2V) training
 and inference pipeline.
 
 
 
 https://github.com/user-attachments/assets/560b72a5-8384-4892-a293-0766acbcf106
 
+## Chanjing-Avatar Model Family
+
+- [Chanjing-Avatar 14B](https://github.com/chanjing-ai/Chanjing-Avatar) ([weights](https://huggingface.co/cicada-ai/Chanjing-Avatar-14B)): 720p image-to-video generation from a reference image and driving audio.
+- [Chanjing-Avatar V2V 5B](https://github.com/chanjing-ai/Chanjing-Avatar-V2V-5B) ([weights](https://huggingface.co/cicada-ai/Chanjing-Avatar-V2V-5B)): video-to-video generation that preserves source motion and regenerates the speaking face.
+- [Chanjing-Avatar V2V 1.3B](https://github.com/chanjing-ai/Chanjing-Avatar-V2V-1.3B) ([weights](https://huggingface.co/cicada-ai/Chanjing-Avatar-V2V-1.3B)): a lighter video-to-video model for audio-driven face animation.
 
 
 
@@ -20,14 +25,14 @@ https://github.com/user-attachments/assets/560b72a5-8384-4892-a293-0766acbcf106
 ## Experience It in Our Products
 
 <p align="center">
-  The avatar-generation technology behind Jogg-Avatar is available in our
+  The avatar-generation technology behind Chanjing-Avatar is available in our
   production products. Create AI avatar videos without deploying the model
   locally.
 </p>
 
 <table>
   <tr>
-    <td align="center" width="50%">
+    <td align="center" width="100%">
       <a href="https://www.chanjing.cc/home/">
         <img src="assets/brand/chanjing-logo.png" alt="Chanjing AI" height="52">
       </a>
@@ -38,25 +43,13 @@ https://github.com/user-attachments/assets/560b72a5-8384-4892-a293-0766acbcf106
       <br><br>
       <a href="https://www.chanjing.cc/home/"><strong>Visit Chanjing</strong></a>
     </td>
-    <td align="center" width="50%">
-      <a href="https://www.jogg.ai/">
-        <picture>
-          <source media="(prefers-color-scheme: dark)" srcset="assets/brand/joggai-logo-dark.png">
-          <img src="assets/brand/joggai-logo.png" alt="JoggAI" height="52">
-        </picture>
-      </a>
-      <br>
-      <sub>AI video creation for global marketing and content teams</sub>
-      <br><br>
-      <a href="https://www.jogg.ai/"><strong>Visit JoggAI</strong></a>
-    </td>
   </tr>
 </table>
 
 ## Project Timeline
 
-- 2025-10: released Jogg-Avatar 14B training code
-- 2025-11: released Jogg-Avatar 14B inference code
+- 2025-10: released Chanjing-Avatar 14B training code
+- 2025-11: released Chanjing-Avatar 14B inference code
 - 2026-08: completed repository cleanup, uv migration, and inference usability fixes
 
 ## Installation
@@ -65,8 +58,8 @@ The environment is managed by [uv](https://docs.astral.sh/uv/). The lock file
 uses Python 3.13, PyTorch 2.8.0, and CUDA 12.8 wheels.
 
 ```bash
-git clone https://github.com/chanjing-ai/Jogg-Avatar.git
-cd Jogg-Avatar
+git clone https://github.com/chanjing-ai/Chanjing-Avatar.git
+cd Chanjing-Avatar
 
 # Inference
 uv sync
@@ -85,7 +78,7 @@ uv pip install flash-attn==2.8.3 --no-build-isolation
 ## Model Setup
 
 Download the Wan2.1 base model, Wav2Vec audio encoder, and only the 14B
-Jogg-Avatar checkpoint:
+Chanjing-Avatar checkpoint:
 
 ```bash
 mkdir -p models
@@ -96,9 +89,8 @@ uvx --from modelscope==1.37.1 modelscope download Wan-AI/Wan2.1-T2V-14B \
 
 uv run hf download facebook/wav2vec2-base-960h \
   --local-dir models/wav2vec2-base-960h
-uv run hf download cicada-ai/jogg-avatar \
-  --include "Jogg-Avatar-14B/*" \
-  --local-dir models
+uv run hf download cicada-ai/Chanjing-Avatar-14B \
+  --local-dir models/Chanjing-Avatar-14B
 ```
 
 The default config expects:
@@ -111,7 +103,7 @@ models/
 │   ├── diffusion_pytorch_model-00006-of-00006.safetensors
 │   ├── models_t5_umt5-xxl-enc-bf16.pth
 │   └── Wan2.1_VAE.pth
-├── Jogg-Avatar-14B/
+├── Chanjing-Avatar-14B/
 │   ├── config.json
 │   └── diffusion_pytorch_model.safetensors
 └── wav2vec2-base-960h/
@@ -220,7 +212,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run python \
   examples/wanvideo/train_wan_avatar.py \
   --task train \
   --dataset_path /path/to/dataset \
-  --output_path models/jogg-avatar-14b-train \
+  --output_path models/chanjing-avatar-14b-train \
   --dit_path models/Wan2.1-T2V-14B/diffusion_pytorch_model-00001-of-00006.safetensors,models/Wan2.1-T2V-14B/diffusion_pytorch_model-00002-of-00006.safetensors,models/Wan2.1-T2V-14B/diffusion_pytorch_model-00003-of-00006.safetensors,models/Wan2.1-T2V-14B/diffusion_pytorch_model-00004-of-00006.safetensors,models/Wan2.1-T2V-14B/diffusion_pytorch_model-00005-of-00006.safetensors,models/Wan2.1-T2V-14B/diffusion_pytorch_model-00006-of-00006.safetensors \
   --max_epochs 100 \
   --learning_rate 1e-4 \
@@ -234,7 +226,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 uv run python \
 
 The generic DiffSynth applications, unrelated diffusion models, legacy model
 placeholders, and non-Wan examples were removed. The remaining source tree is
-limited to the Jogg-Avatar 14B model, training entrypoint, inference entrypoint,
+limited to the Chanjing-Avatar 14B model, training entrypoint, inference entrypoint,
 and configuration.
 
 ## Acknowledgments

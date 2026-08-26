@@ -1,11 +1,11 @@
 [project]
-name = "jogg-avatar"
+name = "chanjing-avatar"
 version = "0.1.0"
 description = "Audio-driven 720p avatar video generation based on Wan2.1 14B"
 readme = "README.md"
 requires-python = "==3.13.*"
 license = { file = "LICENSE" }
-authors = [{ name = "Jogg-Avatar contributors" }]
+authors = [{ name = "Chanjing AI contributors" }]
 dependencies = [
     "einops==0.8.1",
     "ftfy==6.3.1",

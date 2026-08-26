@@ -1,6 +1,6 @@
 model_dir: models
 base_model_dir: ${model_dir}/Wan2.1-T2V-14B
-avatar_model_dir: ${model_dir}/Jogg-Avatar-14B
+avatar_model_dir: ${model_dir}/Chanjing-Avatar-14B
 
 dtype: "bf16"
 text_encoder_path: ${base_model_dir}/models_t5_umt5-xxl-enc-bf16.pth

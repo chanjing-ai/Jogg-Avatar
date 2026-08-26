@@ -38,7 +38,7 @@ def parse_hp_string(hp_string):
 
 def parse_args():
     global args
-    parser = argparse.ArgumentParser(description="Run Jogg-Avatar inference.")
+    parser = argparse.ArgumentParser(description="Run Chanjing-Avatar inference.")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file.")
     
     # 定义 argparse 参数

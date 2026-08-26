@@ -676,7 +676,7 @@ class LightningModelForTrain(pl.LightningModule):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Preprocess data and train Jogg-Avatar 14B.")
+    parser = argparse.ArgumentParser(description="Preprocess data and train Chanjing-Avatar 14B.")
     parser.add_argument(
         "--task",
         type=str,

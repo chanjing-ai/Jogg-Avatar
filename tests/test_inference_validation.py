@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +13,25 @@ from Avatar.utils.inference_validation import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 class InferenceValidationTest(unittest.TestCase):
+    def test_tracked_release_contains_no_legacy_brand(self):
+        legacy_brand = "".join(("jo", "gg"))
+        paths = subprocess.check_output(
+            ["git", "ls-files", "-z"], cwd=ROOT
+        ).decode().split("\0")
+        for relative in filter(None, paths):
+            path = ROOT / relative
+            if path.suffix in {".png", ".jpg", ".mp4", ".pth", ".safetensors"}:
+                continue
+            self.assertNotIn(
+                legacy_brand,
+                path.read_text(encoding="utf-8", errors="ignore").lower(),
+                relative,
+            )
+
     def test_window_frames_follow_output_resolution(self):
         self.assertEqual(compute_window_frames(30000, 720, 1280), 33)
         self.assertEqual(compute_window_frames(30000, 1280, 720), 33)
